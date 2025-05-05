@@ -25,7 +25,7 @@ fn resolve_label(cfg_nodes: &BTreeMap<usize, CfgNode>, pc: usize) -> &str {
 
 #[inline]
 fn alu_imm_str(name: &str, insn: &ebpf::Insn) -> String {
-    format!("{} r{}, {}", name, insn.dst, insn.imm)
+    format!("{} r{}, {}", name, insn.dst, insn.imm as u64)
 }
 
 #[inline]
@@ -52,13 +52,23 @@ fn signed_off_str(value: i16) -> String {
 }
 
 #[inline]
-fn ld_st_imm_str(name: &str, insn: &ebpf::Insn) -> String {
+fn ld_st_imm_str(name: &str, insn: &ebpf::Insn) -> String 
+{
+    let size_bits = insn.opc & ebpf::BPF_DW;
+        
+    let imm_str = match size_bits {
+        ebpf::BPF_B => format!("{}", insn.imm as u8),  
+        ebpf::BPF_H => format!("{}", insn.imm as u16), 
+        ebpf::BPF_W => format!("{}", insn.imm as u32), 
+        ebpf::BPF_DW => format!("{}", insn.imm as u64),
+        _ => format!("{}", insn.imm),    
+    };        
     format!(
         "{} [r{}{}], {}",
         name,
         insn.dst,
         signed_off_str(insn.off),
-        insn.imm
+        imm_str
     )
 }
 
@@ -91,7 +101,7 @@ fn jmp_imm_str(name: &str, insn: &ebpf::Insn, cfg_nodes: &BTreeMap<usize, CfgNod
         "{} r{}, {}, {}",
         name,
         insn.dst,
-        insn.imm,
+        insn.imm as u64 ,
         resolve_label(cfg_nodes, target_pc)
     )
 }
@@ -122,7 +132,7 @@ pub fn disassemble_instruction<C: ContextObject>(
     let desc;
     match insn.opc {
         // BPF_LD class
-        ebpf::LD_DW_IMM  => { name = "lddw"; desc = format!("{} r{:}, {:#x}", name, insn.dst, insn.imm); },
+        ebpf::LD_DW_IMM  => { name = "lddw"; desc = format!("{} r{:}, {:#x}", name, insn.dst, insn.imm as u64); },
 
         // BPF_LDX class
         ebpf::LD_B_REG  if !sbpf_version.move_memory_instruction_classes() => { name = "ldxb";  desc = ld_reg_str(name, insn); },
@@ -273,7 +283,7 @@ pub fn disassemble_instruction<C: ContextObject>(
                 name = "syscall";
                 function_name = loader.get_function_registry().lookup_by_key(insn.imm as u32).map(|(function_name, _)| String::from_utf8_lossy(function_name).to_string());
             }
-            desc = format!("{} {}", name, function_name.unwrap_or_else(|| "[invalid]".to_string()));
+            desc = format!("{} {}", name, function_name.unwrap_or_else(|| format!("{:#x}", insn.imm as u32)));
         },
         ebpf::CALL_REG   => { name = "callx"; desc = format!("{} r{}", name, if sbpf_version.callx_uses_src_reg() { insn.src } else { insn.imm as u8 }); },
         ebpf::EXIT     if !sbpf_version.static_syscalls() => { name = "exit"; desc = name.to_string(); },
